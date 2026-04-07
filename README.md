@@ -33,10 +33,9 @@ pip install -r requirements.txt
 python backend.py
 
 # 3. Open browser
-# http://localhost:8000
-```
+http://localhost:8000
 
-That's it. No build step, no Node.js, no Docker.
+```
 
 ---
 
@@ -44,8 +43,8 @@ That's it. No build step, no Node.js, no Docker.
 
 In order to use this tool, please consider the following limitations:
 - Me (This is just a fun weekend vibe-coding project, I'm not an intelligence expert or analyst, I just like data).
-- For vessel data, you need to create an account in AISStream (free account) and get an api key.
-- For aircraft data, you need to create a free account on OpenSky Network and get the client_id and clientSecret.
+- For vessel data, you need to create an account in AISStream (free account) and get an api key. See https://aisstream.io/apikeys
+- For aircraft data, you need to create a free account on OpenSky Network and get the client_id and clientSecret. See https://opensky-network.org/
 - The keys are necessary to start this tool.
 - Real-time aircraft data is limited to just 1k per day (due to api rate usage).
 
