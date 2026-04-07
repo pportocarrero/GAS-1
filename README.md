@@ -33,7 +33,7 @@ pip install -r requirements.txt
 python backend.py
 
 # 3. Open browser
-# → http://localhost:8000
+# http://localhost:8000
 ```
 
 That's it. No build step, no Node.js, no Docker.
