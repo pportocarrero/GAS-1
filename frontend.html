@@ -1,0 +1,1821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GAS-1 · GLOBAL AWARENESS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#02090f; --accent:#00f0d0; --accent2:#00b8ff;
+  --air:#7dd8ff; --sea:#2ee8d8; --sat:#d0a0ff; --jam:#ff7040;
+  --red:#ff4444; --yellow:#ffd060; --green:#50e890;
+  --txt:#e4f2fa; --txt2:#82aabf; --txt3:#1e3848;
+  --panel:rgba(2,12,22,0.93); --border:rgba(0,240,208,0.14); --border2:rgba(0,240,208,0.34);
+  --mono:'IBM Plex Mono',monospace; --ui:'IBM Plex Sans Condensed',sans-serif;
+  --sw:264px;
+}
+html,body{width:100%;height:100%;background:var(--bg);overflow:hidden;font-family:var(--mono);color:var(--txt);}
+
+/* Z-INDEX: 1=map 2=scanlines 3=vignette 4=btmgrad 10=sidebar 20=topbar 30=panels 40=ticker 50=boot */
+#view2d,#view3d{position:fixed;inset:0;z-index:1;}
+#view3d canvas{pointer-events:all !important;}  /* three.js canvas must capture events */
+#view3d{display:none;}
+#map{width:100%;height:100%;background:#010810;}
+#cesiumContainer{width:100%;height:100%;}
+.leaflet-container{background:#010810!important;}
+.leaflet-tile{filter:brightness(0.8) saturate(0.5) hue-rotate(188deg) contrast(1.05);}
+.cesium-widget canvas{background:#010810!important;}
+.cesium-widget-credits,.cesium-credit-container{display:none!important;}
+/* Leaflet tooltip style matching our dark theme */
+.track-dot{width:10px;height:10px;border-radius:50%;display:inline-block;cursor:pointer;}
+.sea-dot{background:#2ee8d8;box-shadow:0 0 5px #2ee8d866;border:1.5px solid rgba(46,232,216,0.6);}
+.sea-dot.selected{background:#fff;box-shadow:0 0 8px #fff;}
+.vessel-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:#2ee8d8;border:1.5px solid rgba(46,232,216,0.8);
+  box-shadow:0 0 4px rgba(46,232,216,0.4);
+  cursor:pointer;display:block;
+}
+.vessel-dot.selected{background:#fff;border-color:#fff;box-shadow:0 0 8px #fff;}
+.sat-marker{display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;}
+.sat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.sat-label{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:500;
+  text-shadow:0 0 4px #000,1px 1px 2px #000;pointer-events:none;line-height:1;}
+.leaflet-tooltip.gas-tooltip{
+  background:rgba(2,12,22,0.92);
+  border:1px solid rgba(0,240,208,0.3);
+  border-radius:0;
+  color:#e4f2fa;
+  font-family:'IBM Plex Mono',monospace;
+  font-size:9px;
+  font-weight:500;
+  letter-spacing:.08em;
+  padding:3px 7px;
+  white-space:nowrap;
+  box-shadow:none;
+}
+.leaflet-tooltip.gas-tooltip::before{display:none;}
+
+#scanlines{position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,0,0,0.038) 3px,rgba(0,0,0,0.038) 4px);}
+#vignette{position:fixed;inset:0;z-index:3;pointer-events:none;
+  background:radial-gradient(ellipse 90% 90% at 50% 50%,transparent 60%,rgba(1,5,12,0.52) 100%);}
+#btmgrad{position:fixed;bottom:0;left:0;right:0;height:88px;z-index:4;pointer-events:none;
+  background:linear-gradient(0deg,rgba(2,9,15,0.78) 0%,transparent 100%);}
+
+/* TOP BAR */
+#topbar{position:fixed;top:0;left:0;right:0;height:44px;z-index:20;
+  display:flex;align-items:center;justify-content:space-between;padding:0 18px;
+  background:rgba(1,9,18,0.96);border-bottom:1px solid var(--border);}
+#topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);
+  animation:scanH 14s linear infinite;opacity:0.3;}
+@keyframes scanH{from{transform:translateX(-110%)}to{transform:translateX(110%)}}
+
+.sysid{font-family:var(--ui);font-weight:700;font-size:20px;letter-spacing:.3em;
+  color:var(--accent);text-shadow:0 0 20px rgba(0,240,208,.35);flex-shrink:0;user-select:none;}
+.sysid em{color:var(--txt2);font-weight:300;font-style:normal;font-size:10px;letter-spacing:.22em;margin-left:10px;}
+
+.tbcenter{display:flex;gap:2px;align-items:center;}
+.dbtn{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.1em;
+  padding:4px 11px;cursor:pointer;border:1px solid transparent;
+  background:transparent;transition:all .15s;user-select:none;
+  display:flex;align-items:center;gap:7px;}
+.dbtn::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.28;transition:all .15s;flex-shrink:0;}
+.dbtn[data-d="air"]{color:var(--air);}
+.dbtn[data-d="sea"]{color:var(--sea);}
+.dbtn[data-d="sat"]{color:var(--sat);}
+.dbtn[data-d="jam"]{color:var(--jam);}
+.dbtn.on{border-color:currentColor;background:rgba(255,255,255,.04);}
+.dbtn.on::before{opacity:1;box-shadow:0 0 5px currentColor;}
+.dbtn:hover{background:rgba(255,255,255,.06);}
+
+#view-toggle{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.16em;
+  padding:4px 14px;cursor:pointer;border:1px solid var(--accent2);
+  background:rgba(0,184,255,.07);color:var(--accent2);transition:all .2s;margin-left:8px;}
+#view-toggle:hover{background:rgba(0,184,255,.16);}
+#view-toggle.active{background:rgba(0,184,255,.20);box-shadow:0 0 14px rgba(0,184,255,.2);}
+
+.tbright{display:flex;align-items:center;gap:14px;font-size:11px;font-weight:500;letter-spacing:.12em;color:var(--txt2);flex-shrink:0;}
+#clk{color:var(--accent);font-size:13px;font-weight:600;}
+.ldot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 9px var(--accent);animation:blink 2s ease infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* credit meter */
+#credit-meter{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:.1em;color:var(--txt2);border:1px solid var(--border);padding:2px 8px;}
+#credit-bar-outer{width:55px;height:4px;background:var(--border);overflow:hidden;}
+#credit-bar{height:100%;background:var(--green);transition:width .4s ease;width:100%;}
+#credit-val{color:var(--green);font-weight:600;min-width:28px;}
+
+/* SIDEBAR */
+#sidebar{position:fixed;top:44px;left:0;bottom:24px;width:var(--sw);z-index:10;
+  background:rgba(1,10,18,0.97);border-right:1px solid var(--border);
+  backdrop-filter:blur(12px);display:flex;flex-direction:column;
+  transform:translateX(0);transition:transform .22s ease;}
+#sidebar.collapsed{transform:translateX(calc(-1 * var(--sw)));}
+#sb-toggle{position:absolute;top:50%;right:-26px;transform:translateY(-50%);
+  width:26px;height:56px;z-index:11;
+  background:rgba(0,240,208,.07);border:1px solid var(--border2);border-left:none;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:16px;color:var(--accent);user-select:none;transition:background .15s;}
+#sb-toggle:hover{background:rgba(0,240,208,.16);}
+
+#sb-header{padding:7px 14px 6px;border-bottom:1px solid var(--border);
+  font-size:9px;font-weight:600;letter-spacing:.2em;color:var(--txt2);
+  display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}
+#sb-count{color:var(--accent);font-size:14px;font-family:var(--ui);font-weight:700;}
+#sb-search{background:transparent;border:none;border-bottom:1px solid var(--border);
+  color:var(--txt);font-family:var(--mono);font-size:11px;font-weight:500;
+  padding:9px 14px;outline:none;letter-spacing:.1em;width:100%;flex-shrink:0;}
+#sb-search::placeholder{color:var(--txt3);}
+
+/* sat category filter */
+#sat-filter-bar{display:flex;flex-wrap:wrap;gap:3px;padding:6px 10px 7px;
+  border-bottom:1px solid var(--border);flex-shrink:0;}
+.sfbtn{font-family:var(--mono);font-size:8px;font-weight:500;letter-spacing:.1em;
+  padding:2px 6px;cursor:pointer;border:1px solid rgba(208,160,255,.2);
+  background:transparent;color:rgba(208,160,255,.55);transition:all .12s;user-select:none;}
+.sfbtn.on{background:rgba(208,160,255,.1);color:var(--sat);border-color:rgba(208,160,255,.5);}
+.sfbtn:hover{color:var(--sat);border-color:rgba(208,160,255,.5);}
+
+#sb-list{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
+.tli{padding:7px 14px;border-bottom:1px solid rgba(0,240,208,.04);
+  cursor:pointer;display:flex;align-items:center;gap:9px;transition:background .1s;}
+.tli:hover{background:rgba(0,240,208,.06);}
+.tli.sel{background:rgba(0,240,208,.1);border-left:2px solid var(--accent);padding-left:12px;}
+.tlidot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.tliname{font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;color:var(--txt);}
+.tlisub{font-size:9px;color:var(--txt2);white-space:nowrap;margin-top:1px;}
+
+/* DETAIL */
+#detail{position:fixed;top:58px;right:18px;width:258px;z-index:30;
+  background:var(--panel);border:1px solid var(--border2);
+  backdrop-filter:blur(16px);padding:14px 16px;display:none;}
+#detail.vis{display:block;}
+#dcls{position:absolute;top:10px;right:12px;font-size:13px;font-weight:600;color:var(--txt2);cursor:pointer;}
+#dcls:hover{color:var(--txt);}
+.dcall{font-family:var(--ui);font-weight:700;font-size:23px;letter-spacing:.1em;margin-bottom:3px;padding-right:22px;line-height:1.2;}
+.dbadge{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.2em;border:1px solid;padding:2px 8px;display:inline-block;margin-bottom:11px;}
+.dsec{font-family:var(--ui);font-size:10px;font-weight:700;letter-spacing:.18em;color:var(--txt2);text-transform:uppercase;margin:10px 0 4px;border-bottom:1px solid var(--border);padding-bottom:3px;}
+.drow{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;padding:4px 0;border-bottom:1px solid rgba(0,240,208,.05);}
+.dkey{color:var(--txt2);font-weight:500;letter-spacing:.06em;flex-shrink:0;}
+.dval{color:var(--txt);font-weight:500;text-align:right;margin-left:8px;}
+.dval.hi{color:var(--accent);}  .dval.warn{color:var(--yellow);}  .dval.link{color:var(--accent2);cursor:pointer;}
+.dval.link:hover{text-decoration:underline;}
+
+/* COUNTS */
+#counts{position:fixed;bottom:36px;left:18px;z-index:30;display:flex;flex-direction:column;gap:4px;pointer-events:none;}
+.crow{display:flex;align-items:baseline;gap:9px;font-size:11px;font-weight:500;letter-spacing:.1em;}
+.clbl{color:var(--txt2);width:74px;}
+.cval{font-family:var(--ui);font-weight:700;font-size:23px;line-height:1;}
+.cval.air{color:var(--air);text-shadow:0 0 12px rgba(125,216,255,.4);}
+.cval.sea{color:var(--sea);}  .cval.sat{color:var(--sat);}  .cval.jam{color:var(--jam);}
+.ctag{font-family:var(--mono);font-size:9px;font-weight:600;}
+.ctag.live{color:var(--accent);}  .ctag.demo{color:var(--yellow);}  .ctag.fail{color:var(--red);}
+
+/* COORDS */
+#coords{position:fixed;bottom:36px;left:50%;transform:translateX(-50%);z-index:30;
+  font-size:11px;font-weight:500;letter-spacing:.14em;color:var(--txt2);pointer-events:none;}
+
+/* SOURCES */
+#sources{position:fixed;bottom:36px;right:18px;z-index:30;display:flex;flex-direction:column;gap:5px;align-items:flex-end;pointer-events:none;}
+.srow{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:500;letter-spacing:.1em;}
+.sdot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.slive{color:var(--accent);} .slive .sdot{background:var(--accent);box-shadow:0 0 5px var(--accent);}
+.sdemo{color:var(--yellow);} .sdemo .sdot{background:var(--yellow);}
+.sfail{color:var(--red);}    .sfail .sdot{background:var(--red);}
+
+/* 3D banner */
+#globe-banner{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:30;
+  background:rgba(0,184,255,.1);border:1px solid rgba(0,184,255,.3);
+  padding:5px 18px;font-size:10px;font-weight:600;letter-spacing:.13em;color:var(--accent2);
+  white-space:nowrap;display:none;pointer-events:none;}
+#globe-banner button{pointer-events:all;}
+
+
+/* FOOTER */
+#footer{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);z-index:35;
+  font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;letter-spacing:.12em;
+  color:rgba(130,170,191,0.6);white-space:nowrap;pointer-events:none;text-align:center;}
+#footer strong{color:rgba(228,242,250,0.75);font-weight:600;}
+#footer a{color:rgba(0,184,255,0.65);text-decoration:none;pointer-events:all;}
+#footer a:hover{color:rgba(0,184,255,1);}
+
+/* TICKER */
+#ticker{position:fixed;bottom:0;left:0;right:0;height:24px;z-index:40;
+  background:rgba(1,7,15,.96);border-top:1px solid var(--border);
+  overflow:hidden;display:flex;align-items:center;}
+#ticin{display:flex;gap:52px;white-space:nowrap;
+  font-size:10px;font-weight:500;letter-spacing:.1em;color:var(--txt2);
+  animation:tscroll 100s linear infinite;}
+@keyframes tscroll{from{transform:translateX(100vw)}to{transform:translateX(-100%)}}
+#ticin .ac{color:var(--accent);}  #ticin .wn{color:var(--yellow);}  #ticin .al{color:var(--red);}
+
+/* vessel live pulse */
+@keyframes vesselPulse{0%,100%{opacity:1}50%{opacity:.4}}
+.vessel-live::before{content:'';width:6px;height:6px;border-radius:50%;
+  background:var(--sea);box-shadow:0 0 6px var(--sea);
+  animation:vesselPulse 1.2s ease infinite;display:inline-block;margin-right:5px;}
+
+/* LEAFLET */
+.leaflet-control-zoom{border:1px solid var(--border2)!important;background:rgba(2,12,22,.9)!important;border-radius:0!important;}
+.leaflet-control-zoom a{background:transparent!important;color:var(--txt2)!important;border-bottom:1px solid var(--border)!important;font-size:16px!important;line-height:28px!important;width:28px!important;height:28px!important;}
+.leaflet-control-zoom a:hover{color:var(--accent)!important;background:rgba(0,240,208,.07)!important;}
+.leaflet-popup-content-wrapper{background:var(--panel)!important;border:1px solid var(--border2)!important;border-radius:0!important;color:var(--txt)!important;font-family:var(--mono)!important;font-size:11px!important;}
+.leaflet-popup-tip-container{display:none;}
+
+/* BOOT */
+#boot{position:fixed;inset:0;z-index:50;background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;}
+.btitle{font-family:var(--ui);font-weight:700;font-size:58px;letter-spacing:.38em;color:var(--accent);text-shadow:0 0 60px rgba(0,240,208,.35),0 0 120px rgba(0,240,208,.1);}
+.bsub{font-size:11px;font-weight:500;letter-spacing:.26em;color:var(--txt2);}
+.bbar{width:300px;height:2px;background:rgba(0,240,208,.1);overflow:hidden;position:relative;}
+.bfill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);box-shadow:0 0 14px var(--accent);transition:width .32s ease;width:0%;}
+.blog{font-size:10px;font-weight:500;letter-spacing:.12em;color:var(--txt2);text-align:center;line-height:2.1;min-height:84px;}
+</style>
+</head>
+<body>
+
+
+<!-- SETUP SCREEN — shown when credentials not yet configured -->
+<div id="setup" style="display:none;position:fixed;inset:0;z-index:60;background:#02090f;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;padding:40px;">
+  <div style="font-family:'IBM Plex Sans Condensed',sans-serif;font-weight:700;font-size:36px;
+    letter-spacing:.3em;color:#00f0d0;text-shadow:0 0 40px rgba(0,240,208,.3)">GAS&#8209;1</div>
+  <div style="font-size:10px;font-weight:500;letter-spacing:.22em;color:#82aabf">INITIAL CONFIGURATION</div>
+  <div style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:16px;">
+
+    <div style="font-size:9px;letter-spacing:.15em;color:#82aabf;
+      border:1px solid rgba(0,240,208,.14);padding:12px 16px;line-height:1.9">
+      GAS-1 needs API credentials to stream live data.<br>
+      These are stored locally in your browser and sent to the backend once.<br>
+      Get your keys at:
+      <a href="https://opensky-network.org/my-opensky/account" target="_blank"
+        style="color:#00b8ff">opensky-network.org</a> ·
+      <a href="https://aisstream.io" target="_blank" style="color:#2ee8d8">aisstream.io</a>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:9px;letter-spacing:.16em;color:#00b8ff">OPENSKY CLIENT ID</label>
+      <input id="cfg-os-id" type="text" placeholder="your-client-id"
+        style="background:rgba(0,184,255,.05);border:1px solid rgba(0,184,255,.3);
+        color:#e4f2fa;font-family:'IBM Plex Mono',monospace;font-size:12px;
+        padding:10px 14px;outline:none;letter-spacing:.06em;width:100%"/>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:9px;letter-spacing:.16em;color:#00b8ff">OPENSKY CLIENT SECRET</label>
+      <input id="cfg-os-sec" type="password" placeholder="your-client-secret"
+        style="background:rgba(0,184,255,.05);border:1px solid rgba(0,184,255,.3);
+        color:#e4f2fa;font-family:'IBM Plex Mono',monospace;font-size:12px;
+        padding:10px 14px;outline:none;letter-spacing:.06em;width:100%"/>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:9px;letter-spacing:.16em;color:#2ee8d8">AISSTREAM API KEY</label>
+      <input id="cfg-ais" type="password" placeholder="your-aisstream-key"
+        style="background:rgba(0,240,208,.04);border:1px solid rgba(0,240,208,.25);
+        color:#e4f2fa;font-family:'IBM Plex Mono',monospace;font-size:12px;
+        padding:10px 14px;outline:none;letter-spacing:.06em;width:100%"/>
+    </div>
+
+    <div id="cfg-err" style="font-size:10px;color:#ff4444;display:none;letter-spacing:.1em"></div>
+
+    <button onclick="submitConfig()"
+      style="font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;
+      letter-spacing:.18em;padding:13px;cursor:pointer;
+      border:1px solid #00f0d0;background:rgba(0,240,208,.08);color:#00f0d0;
+      transition:background .15s;margin-top:4px;"
+      onmouseover="this.style.background='rgba(0,240,208,.18)'"
+      onmouseout="this.style.background='rgba(0,240,208,.08)'">
+      INITIALIZE SYSTEM
+    </button>
+    <div style="font-size:9px;color:#1e3848;text-align:center;letter-spacing:.1em">
+      Credentials are stored in your browser and sent to the local backend. Never shared externally.
+    </div>
+  </div>
+</div>
+
+<div id="boot">
+  <div class="btitle">GAS&#8209;1</div>
+  <div class="bsub">GLOBAL AWARENESS SYSTEM · UNCLASSIFIED OSINT</div>
+  <div class="bbar"><div class="bfill" id="bfill"></div></div>
+  <div class="blog" id="blog"></div>
+</div>
+
+<div id="view2d"><div id="map"></div></div>
+<div id="view3d"><div id="cesiumContainer"></div></div>
+<div id="scanlines"></div>
+<div id="vignette"></div>
+<div id="btmgrad"></div>
+
+<div id="topbar">
+  <div class="sysid">GAS<span style="color:var(--txt2);font-weight:300">-1</span><em>GLOBAL AWARENESS</em></div>
+  <div class="tbcenter">
+    <button class="dbtn on" data-d="air">AIR</button>
+    <button class="dbtn on" data-d="sea">SEA</button>
+    <button class="dbtn on" data-d="sat">SPACE</button>
+    <button class="dbtn on" data-d="jam">GPS JAM</button>
+    <button id="view-toggle" onclick="toggleView()">⬡ 4D</button>
+  </div>
+  <div class="tbright">
+    <div id="credit-meter">
+      <span>OS CREDITS</span>
+      <div id="credit-bar-outer"><div id="credit-bar"></div></div>
+      <span id="credit-val">—</span>
+    </div>
+    <span id="clk">--:--:-- UTC</span>
+    <span style="display:flex;align-items:center;gap:6px"><span class="ldot"></span>LIVE</span>
+  </div>
+</div>
+
+<div id="sidebar">
+  <div id="sb-toggle" onclick="toggleSidebar()">‹</div>
+  <div id="sb-header"><span>ACTIVE TRACKS</span><span id="sb-count">0</span></div>
+  <input id="sb-search" type="text" placeholder="SEARCH CALLSIGN / NAME / MMSI...">
+  <div id="sat-filter-bar">
+    <button class="sfbtn on" data-sg="ACTIVE">ACTIVE</button>
+    <button class="sfbtn on" data-sg="SPECIAL">SPECIAL</button>
+  </div>
+  <div id="sb-list"></div>
+</div>
+
+<div id="detail"><span id="dcls" onclick="closeDetail()">✕</span><div id="din"></div></div>
+
+<div id="counts">
+  <div class="crow"><span class="clbl">AIRCRAFT</span><span class="cval air" id="cair">—</span><span class="ctag" id="tagAir">…</span></div>
+  <div class="crow"><span class="clbl">VESSELS</span><span class="cval sea" id="csea">—</span><span class="ctag live vessel-live" id="tagSea">LIVE</span></div>
+  <div class="crow"><span class="clbl">SATELLITES</span><span class="cval sat" id="csat">—</span><span class="ctag" id="tagSat">…</span></div>
+  <div class="crow"><span class="clbl">JAM ZONES</span><span class="cval jam" id="cjam">—</span><span class="ctag" id="tagJam">…</span></div>
+</div>
+
+<div id="coords">LAT — · LON —</div>
+
+<div id="sources">
+  <div class="srow" id="srcOS"><span class="sdot"></span><span id="srcOSLbl">OPENSKY — CONNECTING</span></div>
+  <div class="srow" id="srcAIS"><span class="sdot"></span><span id="srcAISLbl">AISSTREAM — CONNECTING</span></div>
+  <div class="srow" id="srcTLE"><span class="sdot"></span><span id="srcTLELbl">CELESTRAK TLE — CONNECTING</span></div>
+  <div class="srow" id="srcJam"><span class="sdot"></span><span id="srcJamLbl">GPSJAM — CONNECTING</span></div>
+</div>
+
+<div id="globe-banner">⬡ 4D GLOBE · 3D SPACE + TIME · DRAG=ROTATE · SCROLL=ZOOM · CLICK=SELECT<button id="rt-toggle" onclick="toggleRealtime()" style="margin-left:10px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.14em;padding:3px 10px;cursor:pointer;border:1px solid rgba(80,232,144,0.5);background:rgba(80,232,144,0.05);color:rgba(80,232,144,0.7);" title="Sync Earth rotation to real sidereal time — orbital paths become geometrically exact">⊕ REALTIME</button><button id="rot-toggle" onclick="toggleRotation()" style="margin-left:18px;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.14em;padding:3px 10px;cursor:pointer;border:1px solid var(--accent2);background:rgba(0,184,255,.1);color:var(--accent2);">⏸ PAUSE</button></div>
+<div id="ticker"><div id="ticin">INITIALIZING GAS-1…</div></div>
+
+<div id="footer">Created by <strong>Pedro Portocarrero</strong> &nbsp;·&nbsp; <a href="https://www.linkedin.com/in/pportocarrero/" target="_blank" rel="noopener">LinkedIn ↗</a></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script src="https://unpkg.com/satellite.js@5.0.0/dist/satellite.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   GAS-1 Frontend  —  http://localhost:8000
+   All API calls go to /api/* on the same origin — no CORS issues.
+   AIS data arrives via WebSocket at ws://localhost:8000/ws/vessels
+   ════════════════════════════════════════════════════════════════ */
+
+// ── CLOCK ─────────────────────────────────────────────────────
+setInterval(()=>{
+  const n=new Date(),p=v=>String(v).padStart(2,'0');
+  // GMT-5 = UTC-5
+  const h=(n.getUTCHours()-5+24)%24;
+  document.getElementById('clk').textContent=`${p(h)}:${p(n.getUTCMinutes())}:${p(n.getUTCSeconds())} GMT-5`;
+},1000);
+
+// ── CREDENTIALS CONFIG ───────────────────────────────────────
+// On first run the setup screen is shown. Credentials are sent to
+// the backend via POST /api/config and also saved to localStorage
+// so the setup screen doesn't re-appear on refresh.
+async function submitConfig(){
+  const id  = document.getElementById('cfg-os-id').value.trim();
+  const sec = document.getElementById('cfg-os-sec').value.trim();
+  const ais = document.getElementById('cfg-ais').value.trim();
+  const err = document.getElementById('cfg-err');
+  if(!id || !sec || !ais){
+    err.textContent = 'ALL FIELDS ARE REQUIRED'; err.style.display='block'; return;
+  }
+  err.style.display='none';
+  let r;
+  try{
+    r = await fetch('/api/config', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({opensky_id:id, opensky_secret:sec, aisstream_key:ais})
+    });
+  }catch(e){
+    err.textContent = 'CANNOT REACH BACKEND — open http://localhost:8000 (not file://)';
+    err.style.display='block'; return;
+  }
+  if(r.status === 404){
+    err.textContent = '404: RESTART backend.py — old version running without /api/config';
+    err.style.display='block'; return;
+  }
+  if(!r.ok){
+    err.textContent = 'BACKEND ERROR ' + r.status + ': ' + (await r.text()).slice(0,60);
+    err.style.display='block'; return;
+  }
+  localStorage.setItem('gas1_cfg', JSON.stringify({id,sec,ais}));
+  document.getElementById('setup').style.display = 'none';
+  boot();
+}
+
+async function checkConfig(){
+  try{
+    // First: ask the backend if it already has credentials (set via env vars)
+    const status = await fetch('/api/config/status').then(r=>r.json());
+    if(status.ready){
+      document.getElementById('setup').style.display = 'none';
+      boot(); return;
+    }
+  }catch(_){}
+
+  // Backend doesn't have creds yet — check localStorage for previously saved ones
+  const saved = localStorage.getItem('gas1_cfg');
+  if(saved){
+    try{
+      const {id,sec,ais} = JSON.parse(saved);
+      const r = await fetch('/api/config',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({opensky_id:id,opensky_secret:sec,aisstream_key:ais})
+      });
+      if(r.ok){ document.getElementById('setup').style.display='none'; boot(); return; }
+    }catch(_){}
+  }
+  // No credentials anywhere — show setup
+  showSetup();
+}
+
+function showSetup(){
+  document.getElementById('setup').style.display = 'flex';
+  document.getElementById('boot').style.display  = 'none';
+}
+
+// ── STATE ─────────────────────────────────────────────────────
+const S={
+  aircraft:new Map(), vessels:new Map(), satellites:new Map(),
+  layers:{air:true,sea:true,sat:true,jam:true},
+  satGroups:{ACTIVE:true,SPECIAL:true},
+  selected:null, jamPts:[], view:'2d',
+};
+const COL={air:'#7dd8ff',sea:'#2ee8d8',sat:'#d0a0ff',jam:'#ff7040'};
+const SAT_COL={ACTIVE:'#d0a0ff',SPECIAL:'#d0a0ff',WEATHER:'#60d0ff',COMMS:'#c890ff',NAV:'#50e890',SCI:'#ffd060',MISC:'#90a8c0'};
+
+// AIS ship type → label
+const SHIP_TYPES={0:'—',20:'WIG',30:'FISHING',31:'TOWING',32:'TOWING LARGE',
+  33:'DREDGING',34:'DIVING',35:'MILITARY',36:'SAILING',37:'PLEASURE',
+  40:'HIGH SPEED',50:'PILOT',51:'SAR',52:'TUG',53:'PORT TENDER',54:'ANTI POLL',
+  55:'LAW ENFORCE',60:'PASSENGER',70:'CARGO',80:'TANKER',90:'OTHER'};
+function shipType(code){
+  if(!code) return '—';
+  const base=Math.floor(code/10)*10;
+  return SHIP_TYPES[code]||SHIP_TYPES[base]||`TYPE ${code}`;
+}
+
+const TRAIL_MAX=80;
+const trails=new Map();
+let sidebarOpen=true;
+
+// ── SIDEBAR ───────────────────────────────────────────────────
+function toggleSidebar(){
+  sidebarOpen=!sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed',!sidebarOpen);
+  document.getElementById('sb-toggle').textContent=sidebarOpen?'‹':'›';
+}
+document.querySelectorAll('.sfbtn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const g=btn.dataset.sg; S.satGroups[g]=!S.satGroups[g];
+    btn.classList.toggle('on',S.satGroups[g]);
+    redrawSats2D(); rebuildList();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+//  2D MAP
+// ══════════════════════════════════════════════════════════════
+const map=L.map('map',{center:[22,10],zoom:3,zoomControl:true,
+  minZoom:2,maxZoom:16});
+
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'©OpenStreetMap ©CARTO',subdomains:'abcd',maxZoom:18}).addTo(map);
+
+const LG={
+  trails:    L.layerGroup().addTo(map),
+  footprints:L.layerGroup().addTo(map),
+  jam:       L.layerGroup().addTo(map),
+  sea:       L.layerGroup().addTo(map),
+  sat:       L.layerGroup().addTo(map),
+  air:       L.layerGroup().addTo(map),
+};
+
+
+let jamHeat=null;
+map.on('mousemove',e=>{
+  const la=e.latlng.lat.toFixed(4),lo=e.latlng.lng.toFixed(4);
+  document.getElementById('coords').textContent=`${la>=0?'+':''}${la}°  ${lo>=0?'+':''}${lo}°`;
+});
+
+// ══════════════════════════════════════════════════════════════
+//  4D GLOBE — three.js
+//  4D = 3D space (X,Y,Z) + time (orbits animate in real time)
+//  Earth texture from NASA Blue Marble (public domain)
+//  Satellites: orbital paths + real-time position dots
+//  Vessels: surface dots  |  Aircraft: altitude dots
+// ══════════════════════════════════════════════════════════════
+let globe = null; // three.js state object
+
+const EARTH_R = 1.0;          // Earth radius in scene units
+const SAT_SCALE = 1.0 / 6371; // km → scene units
+
+function initGlobe() {
+  if (globe) return;
+  const container = document.getElementById('cesiumContainer');
+  const W = container.clientWidth  || window.innerWidth;
+  const H = container.clientHeight || window.innerHeight;
+
+  // ── Renderer ──
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setSize(W, H);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x010810);
+  renderer.domElement.style.display = 'block';
+  renderer.domElement.style.pointerEvents = 'all';
+  renderer.domElement.style.position = 'absolute';
+  renderer.domElement.style.inset = '0';
+  container.appendChild(renderer.domElement);
+
+  // ── Scene ──
+  const scene = new THREE.Scene();
+
+  // ── Camera ──
+  const camera = new THREE.PerspectiveCamera(45, W / H, 0.01, 100);
+  camera.position.set(0, 0, 3.2);
+
+  // ── Lights ──
+  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+  sun.position.set(5, 3, 5);
+  scene.add(sun);
+
+  // ── Stars ──
+  const starGeo = new THREE.BufferGeometry();
+  const starVerts = [];
+  for (let i = 0; i < 3000; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi   = Math.acos(2 * Math.random() - 1);
+    const r     = 40 + Math.random() * 20;
+    starVerts.push(
+      r * Math.sin(phi) * Math.cos(theta),
+      r * Math.cos(phi),
+      r * Math.sin(phi) * Math.sin(theta)
+    );
+  }
+  starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVerts, 3));
+  scene.add(new THREE.Points(starGeo,
+    new THREE.PointsMaterial({ color: 0xffffff, size: 0.06, transparent: true, opacity: 0.7 })));
+
+  // ── Earth ──
+  const earthGeo = new THREE.SphereGeometry(EARTH_R, 48, 48);
+
+  // Earth: ocean base + land texture overlay
+  // Use NASA visible Earth textures — reliable CDN, CORS open
+  const loader = new THREE.TextureLoader();
+  const earthMat = new THREE.MeshPhongMaterial({
+    color: 0x0a1a2e,    // dark ocean fallback
+    specular: new THREE.Color(0x111133),
+    shininess: 12,
+  });
+  // Night-side Earth map from NASA via a working CDN
+  loader.load(
+    'https://cdn.jsdelivr.net/npm/three-globe@2.30.0/example/img/earth-dark.jpg',
+    tex => { earthMat.map = tex; earthMat.needsUpdate = true; },
+    undefined,
+    () => {
+      // If texture fails, use procedural ocean/land colours
+      earthMat.color.set(0x0d2137);
+    }
+  );
+  const earth = new THREE.Mesh(earthGeo, earthMat);
+  scene.add(earth);
+
+  // Country / coastline borders — white lines on the globe surface
+  // Load GeoJSON border lines encoded as a lat/lon LineString collection
+  // We draw them as THREE.Line segments directly on the sphere surface
+  fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+    .then(r => r.json())
+    .then(topo => {
+      // Use topojson-client if available, else skip
+      if (typeof topojson === 'undefined') return;
+      const countries = topojson.feature(topo, topo.objects.countries);
+      const borderMat = new THREE.LineBasicMaterial({
+        color: 0x2a4a6a, transparent: true, opacity: 0.5
+      });
+      countries.features.forEach(feat => {
+        const coords = feat.geometry.type === 'Polygon'
+          ? feat.geometry.coordinates
+          : feat.geometry.coordinates.flat(1);
+        coords.forEach(ring => {
+          const pts = ring.map(([lon, lat]) =>
+            globe.latLonAltToVec3(lat, lon, 0.5));
+          if (pts.length < 2) return;
+          const geo = new THREE.BufferGeometry().setFromPoints(pts);
+          scene.add(new THREE.Line(geo, borderMat));
+        });
+      });
+    }).catch(() => {}); // silently ignore if fetch fails
+
+  // Atmosphere glow
+  const atmGeo = new THREE.SphereGeometry(EARTH_R * 1.012, 48, 48);
+  const atmMat = new THREE.MeshPhongMaterial({
+    color: 0x003888,
+    transparent: true,
+    opacity: 0.06,
+    side: THREE.FrontSide,
+    depthWrite: false,
+  });
+  scene.add(new THREE.Mesh(atmGeo, atmMat));
+
+  // ── Conversion helpers ──
+  function latLonAltToVec3(lat, lon, altKm) {
+    const r = EARTH_R + altKm * SAT_SCALE;
+    const phi   = (90 - lat) * Math.PI / 180;
+    const theta = (lon + 180)  * Math.PI / 180;
+    return new THREE.Vector3(
+      -r * Math.sin(phi) * Math.cos(theta),
+       r * Math.cos(phi),
+       r * Math.sin(phi) * Math.sin(theta)
+    );
+  }
+
+  // ── ECI → scene units (satellites in realtime mode) ──
+  // ECI positions from satellite.js are in km.
+  // X = toward vernal equinox, Y = north pole, Z = completes right-hand.
+  // three.js Y-up: map ECI-X→scene-X, ECI-Z→scene-Z, ECI-Y→scene-Y.
+  function eciToVec3(pos) {
+    const s = SAT_SCALE; // km → scene units
+    return new THREE.Vector3(pos.x * s, pos.z * s, pos.y * s);
+  }
+
+  // ── Earth-local geodetic → vec3 (vessels/aircraft in realtime mode) ──
+  // When an object is a child of globe.earth (which has rotation.y = -gmst),
+  // we must NOT bake longitude into world space — use Earth's local frame instead.
+  // Difference from latLonAltToVec3: theta uses lon directly, no +180 offset,
+  // and the axis mapping matches Earth's local coordinate system.
+  function earthLocalVec3(lat, lon, altKm) {
+    const r     = EARTH_R + altKm * SAT_SCALE;
+    const phi   = (90 - lat) * Math.PI / 180;
+    const theta = lon * Math.PI / 180;          // no +180 offset
+    return new THREE.Vector3(
+       r * Math.sin(phi) * Math.sin(theta),     // X
+       r * Math.cos(phi),                        // Y (north pole)
+      -r * Math.sin(phi) * Math.cos(theta)      // Z
+    );
+  }
+
+  // ── Object containers ──
+  const satGroup     = new THREE.Group(); scene.add(satGroup);
+  const vesselGroup  = new THREE.Group(); scene.add(vesselGroup);
+  const airGroup     = new THREE.Group(); scene.add(airGroup);
+  const jamGroup     = new THREE.Group(); scene.add(jamGroup);
+  const orbitGroup   = new THREE.Group(); scene.add(orbitGroup);
+  const clickTargets = [];
+
+  // Assign globe BEFORE event handlers so globe.* writes don't throw
+  globe = { renderer, scene, camera, earth, satGroup, vesselGroup, airGroup,
+            jamGroup, orbitGroup, clickTargets, latLonAltToVec3, eciToVec3, earthLocalVec3,
+            rotX: 0.3, rotY: 0, zoom: 3.2, isDragging: false, autoRotate: true, realtimeMode: false, rotYOffset: 0, animId: null };
+
+  // ── Mouse orbit controls ──
+  // globe.* is written/read here — globe struct is assigned below before animate
+  let prevMouse = { x: 0, y: 0 };
+  let lastTouchDist = 0;
+
+  renderer.domElement.addEventListener('mousedown', e => {
+    globe.isDragging = true; prevMouse = { x: e.clientX, y: e.clientY };
+  });
+  renderer.domElement.addEventListener('mouseup',   () => globe.isDragging = false);
+  renderer.domElement.addEventListener('mouseleave',() => globe.isDragging = false);
+  renderer.domElement.addEventListener('mousemove', e => {
+    if (!globe.isDragging) return;
+    const dy = (e.clientX - prevMouse.x) * 0.005;
+    if (globe.realtimeMode) globe.rotYOffset -= dy;
+    else                    globe.rotY       -= dy;
+    globe.rotX += (e.clientY - prevMouse.y) * 0.005;
+    globe.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, globe.rotX));
+    prevMouse = { x: e.clientX, y: e.clientY };
+  });
+  renderer.domElement.addEventListener('wheel', e => {
+    e.preventDefault();
+    globe.zoom += e.deltaY * 0.003;
+    globe.zoom = Math.max(1.3, Math.min(8, globe.zoom));
+  }, { passive: false });
+  // Touch
+  renderer.domElement.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) { globe.isDragging = true; prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
+    if (e.touches.length === 2) lastTouchDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+  });
+  renderer.domElement.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (e.touches.length === 1 && globe.isDragging) {
+      const dy = (e.touches[0].clientX - prevMouse.x) * 0.005;
+      if (globe.realtimeMode) globe.rotYOffset -= dy;
+      else                    globe.rotY       -= dy;
+      globe.rotX += (e.touches[0].clientY - prevMouse.y) * 0.005;
+      globe.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, globe.rotX));
+      prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+    if (e.touches.length === 2) {
+      const d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+      globe.zoom -= (d - lastTouchDist) * 0.01;
+      globe.zoom = Math.max(1.3, Math.min(8, globe.zoom));
+      lastTouchDist = d;
+    }
+  }, { passive: false });
+  renderer.domElement.addEventListener('touchend', () => globe.isDragging = false);
+
+  // Click to select
+  renderer.domElement.addEventListener('click', e => {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width)  *  2 - 1,
+      ((e.clientY - rect.top)  / rect.height) * -2 + 1
+    );
+    const ray = new THREE.Raycaster();
+    ray.params.Points = { threshold: 0.05 }; // needed to click Points geometry
+    ray.setFromCamera(mouse, camera);
+    const hits = ray.intersectObjects(globe.clickTargets, false);
+    if (hits.length > 0) {
+      const obj = hits[0].object;
+      if (obj.userData.gasId) {
+        selTrack(obj.userData.gasId, obj.userData.gasDomain);
+      } else if (obj.userData.isSatPoints && globe.satMeta) {
+        const idx = hits[0].index;
+        if (idx != null && globe.satMeta[idx]) selTrack(globe.satMeta[idx].id, 'sat');
+      } else if (obj.userData.isVesselPoints && hits[0].index != null) {
+        const id = obj.userData.ids[hits[0].index];
+        if (id) selTrack(id, 'sea');
+      } else if (obj.userData.isAirPoints && hits[0].index != null) {
+        const id = obj.userData.ids[hits[0].index];
+        if (id) selTrack(id, 'air');
+      }
+    }
+  });
+
+
+  // ── Resize handler ──
+  window.addEventListener('resize', () => {
+    if (S.view !== '4d') return;
+    const W2 = container.clientWidth, H2 = container.clientHeight;
+    camera.aspect = W2 / H2; camera.updateProjectionMatrix();
+    renderer.setSize(W2, H2);
+  });
+
+  // ── Animate loop ──
+  globe._lastSatUpdate = 0;
+  globe._animate = function animate() {
+    globe.animId = requestAnimationFrame(globe._animate);
+
+    if (globe.realtimeMode) {
+      // ── REALTIME MODE ──────────────────────────────────────────
+      // Compute current GMST (Greenwich Mean Sidereal Time) in radians.
+      // This is the angle between the vernal equinox and Greenwich meridian.
+      // Earth must rotate by -GMST around Y to align its texture correctly.
+      const nowD  = new Date();
+      const gmst  = satellite.gstime(nowD);
+      // Apply sidereal rotation to Earth mesh + user drag offset
+      earth.rotation.y = -gmst + globe.rotYOffset;
+      // Vessels/aircraft ride on Earth — handled in globe4dUpdate (children of earth)
+    } else {
+      // ── FREE MODE (illustrative) ───────────────────────────────
+      // Restore Earth to identity and apply manual rotY to camera
+      earth.rotation.y = 0;
+      if (!globe.isDragging && globe.autoRotate) globe.rotY += 0.0008;
+    }
+
+    // Camera orbit (user drag applies on top in both modes)
+    const rotY = globe.realtimeMode ? globe.rotYOffset : globe.rotY;
+    const r = globe.zoom;
+    camera.position.set(
+      r * Math.sin(rotY) * Math.cos(globe.rotX),
+      r * Math.sin(globe.rotX),
+      r * Math.cos(rotY) * Math.cos(globe.rotX)
+    );
+    camera.lookAt(0, 0, 0);
+
+    // Satellite propagation (2s throttle)
+    const now = performance.now();
+    if (now - globe._lastSatUpdate > 2000) {
+      globeUpdateSatPositions();
+      globe._lastSatUpdate = now;
+    }
+    renderer.render(scene, camera);
+  }
+  globe._animate();
+  globe4dUpdate(); // populate after globe struct and animate loop are both running
+  tick('4D GLOBE READY · three.js · drag to rotate · scroll to zoom', 'ac');
+}
+
+// ── Clear a group's children ──
+function clearGroup(grp) {
+  while (grp.children.length) grp.remove(grp.children[0]);
+}
+
+
+// ── 4D Icon textures — canvas-drawn, one texture per domain ──────────────
+// Each texture is a 64×64 canvas with a white shape on transparent background.
+// THREE.Points PointsMaterial.map replaces the default dot with our shape.
+// White shape + vertex colour = coloured icon in scene (colour multiplication).
+function makeIconTexture(drawFn) {
+  const sz = 64;
+  const c  = document.createElement('canvas');
+  c.width  = sz; c.height = sz;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, sz, sz);
+  drawFn(ctx, sz);
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// ✈ Aircraft — top-down airplane silhouette
+const TEX_AIR = makeIconTexture((ctx, s) => {
+  const h = s / 2;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  // Fuselage
+  ctx.ellipse(h, h, s*0.07, s*0.38, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Wings
+  ctx.beginPath();
+  ctx.ellipse(h, h*0.95, s*0.38, s*0.07, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Tail fins
+  ctx.beginPath();
+  ctx.ellipse(h, h*1.55, s*0.16, s*0.05, 0, 0, Math.PI*2);
+  ctx.fill();
+});
+
+// ⚓ Vessel — top-down ship silhouette
+const TEX_SEA = makeIconTexture((ctx, s) => {
+  const h = s / 2;
+  ctx.fillStyle = '#ffffff';
+  // Hull — elongated rounded rect
+  ctx.beginPath();
+  ctx.ellipse(h, h, s*0.14, s*0.36, 0, 0, Math.PI*2);
+  ctx.fill();
+  // Bridge superstructure
+  ctx.fillRect(h - s*0.07, h - s*0.12, s*0.14, s*0.18);
+  // Bow point
+  ctx.beginPath();
+  ctx.moveTo(h - s*0.14, h - s*0.36);
+  ctx.lineTo(h + s*0.14, h - s*0.36);
+  ctx.lineTo(h, h - s*0.44);
+  ctx.closePath();
+  ctx.fill();
+});
+
+// 🛰 Satellite — solar panel wings + body
+const TEX_SAT = makeIconTexture((ctx, s) => {
+  const h = s / 2;
+  ctx.fillStyle = '#ffffff';
+  // Body
+  ctx.fillRect(h - s*0.1, h - s*0.1, s*0.2, s*0.2);
+  // Left panel
+  ctx.fillRect(h - s*0.4, h - s*0.07, s*0.26, s*0.14);
+  // Right panel
+  ctx.fillRect(h + s*0.14, h - s*0.07, s*0.26, s*0.14);
+  // Antenna
+  ctx.fillRect(h - s*0.02, h - s*0.32, s*0.04, s*0.22);
+});
+
+// ── Build all 4D objects from current data ──
+function globe4dUpdate() {
+  if (!globe) return;
+  globe.clickTargets.length = 0;
+
+  // Clear earth-parented objects from previous realtime builds
+  while (globe.earth.children.length > 0) globe.earth.remove(globe.earth.children[0]);
+
+  // Satellites: use THREE.Points — ONE draw call for all sats (huge perf gain)
+  clearGroup(globe.satGroup);
+  clearGroup(globe.orbitGroup);
+  if (S.layers.sat && satRecs.length > 0) {
+    const now = new Date();
+    const gmst = satellite.gstime(now);
+    const positions = [], colors = [], satMeta = [];
+
+    satRecs.slice(0, 200).forEach(rec => {
+      if (!S.satGroups[rec.grp]) return;
+      try {
+        const pv = satellite.propagate(rec.satrec, now);
+        if (!pv.position || pv.position === false) return;
+        const geo = satellite.eciToGeodetic(pv.position, gmst);
+        const lat = satellite.degreesLat(geo.latitude);
+        const lon = satellite.degreesLong(geo.longitude);
+        const alt = geo.height;
+        if (isNaN(lat)||isNaN(lon)||isNaN(alt)) return;
+
+        // In realtime mode: place sat in ECI space (fixed to stars).
+        // In free mode: use geodetic (lat/lon fixed to Earth surface).
+        let v3;
+        if (globe.realtimeMode) {
+          v3 = globe.eciToVec3(pv.position); // raw ECI, no Earth rotation applied
+        } else {
+          v3 = globe.latLonAltToVec3(lat, lon, alt);
+        }
+        positions.push(v3.x, v3.y, v3.z);
+        const c = new THREE.Color(SAT_COL[rec.grp] || COL.sat);
+        colors.push(c.r, c.g, c.b);
+        satMeta.push({satrec: rec.satrec, id: 'sat_'+rec.name, grp: rec.grp});
+
+        // Orbital path — only draw for selected sat to save draw calls
+        if ('sat_'+rec.name === S.selected) {
+          const periodMin = 2*Math.PI/rec.satrec.no;
+          const pts3d = [];
+          for (let i=0; i<=60; i++) {
+            const t = new Date(now.getTime()+(i/60)*periodMin*60000);
+            const pv2 = satellite.propagate(rec.satrec, t);
+            if (!pv2.position||pv2.position===false) continue;
+            let p3;
+            if (globe.realtimeMode) {
+              // ECI path: geometrically exact ellipse, independent of Earth rotation
+              p3 = globe.eciToVec3(pv2.position);
+            } else {
+              const g2 = satellite.eciToGeodetic(pv2.position, satellite.gstime(t));
+              const la = satellite.degreesLat(g2.latitude);
+              const lo = satellite.degreesLong(g2.longitude);
+              const h  = g2.height;
+              if (isNaN(la)||isNaN(lo)||isNaN(h)) continue;
+              p3 = globe.latLonAltToVec3(la,lo,h);
+            }
+            pts3d.push(p3);
+          }
+          if (pts3d.length>=2) {
+            const col3 = new THREE.Color(SAT_COL[rec.grp]||COL.sat);
+            globe.orbitGroup.add(new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints(pts3d),
+              new THREE.LineBasicMaterial({color:col3,transparent:true,opacity:0.6})));
+          }
+        }
+      } catch(_) {}
+    });
+
+    // Store satMeta on globe for per-frame position updates
+    globe.satMeta = satMeta;
+
+    // Create Points object — single draw call
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color',    new THREE.Float32BufferAttribute(colors, 3));
+    const pts = new THREE.Points(geo,
+      new THREE.PointsMaterial({size:0.07, vertexColors:true, sizeAttenuation:true,
+        map:TEX_SAT, transparent:true, alphaTest:0.1, depthWrite:false}));
+    pts.userData = { isSatPoints: true };
+    globe.satGroup.add(pts);
+    globe.satPointsGeo = geo; // keep reference for per-frame position updates
+    globe.clickTargets.push(pts); // raycasting on Points works in three.js
+  }
+
+  // Vessels — Points geometry (1 draw call)
+  clearGroup(globe.vesselGroup);
+  if (S.layers.sea && S.vessels.size > 0) {
+    const vpos = [], vids = [];
+    S.vessels.forEach((v, mmsi) => {
+      const p = globe.latLonAltToVec3(v.lat, v.lon, 0);
+      vpos.push(p.x, p.y, p.z); vids.push(mmsi);
+    });
+    const vgeo = new THREE.BufferGeometry();
+    vgeo.setAttribute('position', new THREE.Float32BufferAttribute(vpos, 3));
+    const vpts = new THREE.Points(vgeo, new THREE.PointsMaterial({size:0.038,color:0x2ee8d8,
+      sizeAttenuation:true, map:TEX_SEA, transparent:true, alphaTest:0.1, depthWrite:false}));
+    vpts.userData = { isVesselPoints: true, ids: vids };
+    // Always add to vesselGroup in world space — latLonAltToVec3 already gives
+    // the correct world position that matches the rotating Earth texture
+    globe.vesselGroup.add(vpts);
+    globe.clickTargets.push(vpts);
+  }
+
+  // Aircraft — Points at real altitude with visual exaggeration factor
+  // Real altitude (metres) → km → scene units, but multiplied by 80 so aircraft
+  // are visibly above the surface. Relative altitude differences are preserved.
+  // A stem line connects each aircraft to the surface beneath it.
+  clearGroup(globe.airGroup);
+  if (S.layers.air && S.aircraft.size > 0) {
+    const apos = [], aids = [];
+    const stemMat = new THREE.LineBasicMaterial({
+      color: 0x7dd8ff, transparent: true, opacity: 0.25
+    });
+    S.aircraft.forEach((a, id) => {
+      if (!a.lat || !a.lon) return;
+      const altKm = ((a.alt || 10000) / 1000) * 20;
+      const p  = globe.latLonAltToVec3(a.lat, a.lon, altKm);
+      const p0 = globe.latLonAltToVec3(a.lat, a.lon, 0);
+      apos.push(p.x, p.y, p.z);
+      aids.push(id);
+      // Stem line: surface → aircraft
+      const stemGeo = new THREE.BufferGeometry().setFromPoints([p0, p]);
+      globe.airGroup.add(new THREE.Line(stemGeo, stemMat));
+    });
+    const ageo = new THREE.BufferGeometry();
+    ageo.setAttribute('position', new THREE.Float32BufferAttribute(apos, 3));
+    const apts = new THREE.Points(ageo, new THREE.PointsMaterial({size:0.035, color:0x7dd8ff,
+      sizeAttenuation:true, map:TEX_AIR, transparent:true, alphaTest:0.1, depthWrite:false}));
+    apts.userData = { isAirPoints: true, ids: aids };
+    globe.airGroup.add(apts);
+    globe.clickTargets.push(apts);
+  }
+
+  // GPS Jam zones (orange glowing discs on surface)
+  clearGroup(globe.jamGroup);
+  if (S.layers.jam) {
+    S.jamPts.forEach(([lat, lon, intensity]) => {
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.04 * intensity, 16),
+        new THREE.MeshBasicMaterial({
+          color: new THREE.Color(COL.jam),
+          transparent: true,
+          opacity: intensity * 0.45,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      );
+      // Orient disc tangent to surface
+      const pos = globe.latLonAltToVec3(lat, lon, 1);
+      disc.position.copy(pos);
+      disc.lookAt(0, 0, 0);
+      disc.rotateX(Math.PI / 2);
+      globe.jamGroup.add(disc);
+    });
+  }
+}
+
+// ── Update satellite positions in the Points buffer ──
+function globeUpdateSatPositions() {
+  if (!globe || !S.layers.sat || !globe.satPointsGeo || !globe.satMeta) return;
+  const now  = new Date();
+  const gmst = satellite.gstime(now);
+  const pos  = globe.satPointsGeo.attributes.position;
+  for (let i = 0; i < globe.satMeta.length; i++) {
+    try {
+      const pv = satellite.propagate(globe.satMeta[i].satrec, now);
+      if (!pv.position || pv.position === false) continue;
+      const geo = satellite.eciToGeodetic(pv.position, gmst);
+      const lat = satellite.degreesLat(geo.latitude);
+      const lon = satellite.degreesLong(geo.longitude);
+      const alt = geo.height;
+      if (!isNaN(lat) && !isNaN(lon) && !isNaN(alt)) {
+        let v3;
+        if (globe.realtimeMode) {
+          v3 = globe.eciToVec3(pv.position);
+        } else {
+          v3 = globe.latLonAltToVec3(lat, lon, alt);
+        }
+        pos.setXYZ(i, v3.x, v3.y, v3.z);
+      }
+    } catch(_) {}
+  }
+  pos.needsUpdate = true; // tell three.js buffer changed
+}
+
+function toggleRealtime(){
+  if(!globe) return;
+  globe.realtimeMode = !globe.realtimeMode;
+  const btn = document.getElementById('rt-toggle');
+  if(globe.realtimeMode){
+    btn.style.background   = 'rgba(80,232,144,0.15)';
+    btn.style.borderColor  = 'rgba(80,232,144,0.9)';
+    btn.style.color        = '#50e890';
+    btn.textContent        = '⊕ REALTIME ON';
+    // Sync rotYOffset to current rotY so view doesn't jump
+    globe.rotYOffset = globe.rotY;
+    globe.autoRotate = false; // sidereal rate takes over, no need for manual spin
+    // Update pause button
+    const pb = document.getElementById('rot-toggle');
+    pb.textContent = '▶ ROTATE'; pb.style.background='rgba(0,240,208,.1)';
+    pb.style.borderColor='var(--accent)'; pb.style.color='var(--accent)';
+  } else {
+    btn.style.background  = 'rgba(80,232,144,0.05)';
+    btn.style.borderColor = 'rgba(80,232,144,0.5)';
+    btn.style.color       = 'rgba(80,232,144,0.7)';
+    btn.textContent       = '⊕ REALTIME';
+    globe.earth.rotation.y = 0;
+    globe.autoRotate  = true;
+  }
+  globe4dUpdate(); // rebuild with correct coordinate system
+}
+
+function toggleRotation(){
+  if(!globe) return;
+  globe.autoRotate = !globe.autoRotate;
+  const btn = document.getElementById('rot-toggle');
+  btn.textContent = globe.autoRotate ? '⏸ PAUSE' : '▶ ROTATE';
+  btn.style.background = globe.autoRotate ? 'rgba(0,184,255,.1)' : 'rgba(0,240,208,.1)';
+  btn.style.borderColor = globe.autoRotate ? 'var(--accent2)' : 'var(--accent)';
+  btn.style.color       = globe.autoRotate ? 'var(--accent2)' : 'var(--accent)';
+}
+
+function toggleView() {
+  if (S.view === '2d') {
+    S.view = '4d';
+    document.getElementById('view2d').style.display  = 'none';
+    document.getElementById('view3d').style.display  = 'block';
+    document.getElementById('view-toggle').textContent = '⬡ 2D';
+    document.getElementById('view-toggle').classList.add('active');
+    document.getElementById('globe-banner').style.display = 'block';
+    document.getElementById('coords').style.display = 'none';
+    initGlobe();
+    // If globe already existed (returning from 2D), restart the animation loop
+    // and reset the pause button to its default state
+    if (globe && !globe.animId) {
+      // Reset to free-rotate mode and restart the shared animate loop
+      globe.autoRotate = true;
+      globe.realtimeMode = false;
+      globe.earth.rotation.y = 0;
+      const rotBtn = document.getElementById('rot-toggle');
+      rotBtn.textContent = '⏸ PAUSE';
+      rotBtn.style.background = 'rgba(0,184,255,.1)';
+      rotBtn.style.borderColor = 'var(--accent2)';
+      rotBtn.style.color = 'var(--accent2)';
+      const rtBtn = document.getElementById('rt-toggle');
+      rtBtn.textContent = '⊕ REALTIME';
+      rtBtn.style.background = 'rgba(80,232,144,0.05)';
+      rtBtn.style.borderColor = 'rgba(80,232,144,0.5)';
+      rtBtn.style.color = 'rgba(80,232,144,0.7)';
+      globe._animate(); // restart the same loop used during init
+    }
+    tick('VIEW → 4D GLOBE · three.js', 'ac');
+  } else {
+    S.view = '2d';
+    // Stop animation loop
+    if (globe && globe.animId) { cancelAnimationFrame(globe.animId); globe.animId = null; }
+    document.getElementById('view3d').style.display  = 'none';
+    document.getElementById('view2d').style.display  = 'block';
+    document.getElementById('view-toggle').textContent = '⬡ 4D';
+    document.getElementById('view-toggle').classList.remove('active');
+    document.getElementById('globe-banner').style.display = 'none';
+    document.getElementById('coords').style.display = 'block';
+    tick('VIEW → 2D MAP', 'ac');
+  }
+}
+
+// Refresh 4D globe when data updates (called from fetchAir, propagateSats etc.)
+function refresh4d() {
+  if (S.view === '4d' && globe) globe4dUpdate();
+}
+
+// ── 2D ICONS ──────────────────────────────────────────────────
+function airSVG(hdg,sel){
+  const c=sel?'#fff':COL.air,a=(hdg||0)-90;
+  return `<svg width="22" height="22" viewBox="-11 -11 22 22" xmlns="http://www.w3.org/2000/svg"><g transform="rotate(${a})"><polygon points="0,-7 4,5 0,2 -4,5" fill="${c}" opacity=".93"/><line x1="-6" y1="1" x2="6" y2="1" stroke="${c}" stroke-width="1.3" opacity=".7"/></g></svg>`;
+}
+function seaSVG(sel,live){
+  const c=sel?'#fff':COL.sea;
+  const pulse=live?`<circle cx="5.5" cy="5.5" r="5" fill="none" stroke="${c}" stroke-width=".6" opacity=".4"><animate attributeName="r" values="4;7;4" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values=".4;0;.4" dur="2s" repeatCount="indefinite"/></circle>`:'';
+  return `<svg width="11" height="11" viewBox="0 0 11 11" xmlns="http://www.w3.org/2000/svg">${pulse}<rect x="1" y="1" width="9" height="9" fill="none" stroke="${c}" stroke-width="1.5"/><line x1="5.5" y1="1" x2="5.5" y2="10" stroke="${c}" stroke-width=".8"/><line x1="1" y1="5.5" x2="10" y2="5.5" stroke="${c}" stroke-width=".8"/></svg>`;
+}
+function satIconSVG(col,sel){
+  const c=sel?'#fff':col;
+  return `<svg width="16" height="10" viewBox="0 0 16 10" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="3" width="4" height="4" fill="${c}" opacity=".65"/><rect x="12" y="3" width="4" height="4" fill="${c}" opacity=".65"/><line x1="4" y1="5" x2="6" y2="5" stroke="${c}" stroke-width="1.3"/><line x1="10" y1="5" x2="12" y2="5" stroke="${c}" stroke-width="1.3"/><circle cx="8" cy="5" r="2.5" fill="${c}" opacity=".95"/></svg>`;
+}
+function mkIcon(svg,lbl,col,ax,ay){
+  return L.divIcon({
+    html:`<div style="position:relative">${svg}<div style="position:absolute;top:-4px;left:${ax+4}px;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:500;color:${col};white-space:nowrap;text-shadow:0 0 5px #000,1px 1px 2px #000;pointer-events:none">${lbl||''}</div></div>`,
+    className:'',iconAnchor:[ax,ay],
+  });
+}
+
+// ── TRAILS ────────────────────────────────────────────────────
+// Each trail is a smooth dashed polyline — clean, not jagged
+const trailPolylines=new Map(); // id → L.polyline
+
+function pushTrail(id,lat,lng,col){
+  if(!trails.has(id)) trails.set(id,[]);
+  const pts=trails.get(id);
+  const last=pts[pts.length-1];
+  // Skip micro-movements to avoid noise
+  if(last&&Math.abs(last[0]-lat)<.001&&Math.abs(last[1]-lng)<.001) return;
+  pts.push([lat,lng]);
+  if(pts.length>TRAIL_MAX) pts.shift();
+
+  if(pts.length<2) return;
+
+  // Update existing polyline in-place if possible (avoids layer churn)
+  if(trailPolylines.has(id)){
+    trailPolylines.get(id).setLatLngs(pts);
+  } else {
+    const line=L.polyline(pts,{
+      color:col, weight:1, opacity:0.22,
+      smoothFactor:4,   // smooth out GPS noise — no jagged corners
+      dashArray:'3 8',  // subtle dashes — visually quieter than solid lines
+    });
+    LG.trails.addLayer(line);
+    trailPolylines.set(id,line);
+  }
+}
+
+// ── TICKER ────────────────────────────────────────────────────
+const tickQ=[];
+function tick(msg,cls=''){
+  const t=new Date().toISOString().substr(11,8);
+  tickQ.unshift(`<span class="${cls}">[${t}Z]</span> ${msg}`);
+  if(tickQ.length>30)tickQ.pop();
+  document.getElementById('ticin').innerHTML=tickQ.join('&nbsp;&nbsp;·&nbsp;&nbsp;');
+}
+function setSrc(id,st,lbl){
+  const w=document.getElementById('src'+id);if(w)w.className=`srow s${st}`;
+  const l=document.getElementById('src'+id+'Lbl');if(l&&lbl)l.textContent=lbl;
+}
+function setTag(id,cls,lbl){
+  const el=document.getElementById('tag'+id);if(!el)return;
+  el.className='ctag '+cls;el.textContent=lbl;
+}
+function updateCreditMeter(rem){
+  if(rem==null)return;
+  const n=parseInt(rem)||0;
+  const pct=Math.min(100,(n/4000)*100);
+  document.getElementById('credit-bar').style.width=pct+'%';
+  document.getElementById('credit-bar').style.background=pct>50?'var(--green)':pct>20?'var(--yellow)':'var(--red)';
+  document.getElementById('credit-val').textContent=n;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  AIR — OPENSKY (via local proxy /api/aircraft)
+//
+//  KEY FIX: we maintain a persistent Map of Leaflet markers
+//  (airMarkers) and update their position/icon in-place.
+//  We NEVER call LG.air.clearLayers() — that caused the
+//  flicker/disappear bug because clearLayers() + re-add is
+//  not atomic and races with the dead-reckoning interval.
+// ══════════════════════════════════════════════════════════════
+let airPollTimer=null;
+let pollInterval=90000;
+const airMarkers=new Map(); // icao24 → L.marker (persistent)
+
+function upsertAircraftMarker(id,a){
+  if(!S.layers.air) return;
+  const icon=mkIcon(airSVG(a.hdg,S.selected===id),a.cs,COL.air,11,11);
+  if(airMarkers.has(id)){
+    const m=airMarkers.get(id);
+    m.setLatLng([a.lat,a.lon]);
+    m.setIcon(icon);
+  } else {
+    const m=L.marker([a.lat,a.lon],{icon})
+      .on('click',()=>selTrack(id,'air'));
+    LG.air.addLayer(m);
+    airMarkers.set(id,m);
+  }
+}
+
+function removeStaleAircraftMarkers(currentIds){
+  // Remove markers for aircraft no longer in the feed
+  airMarkers.forEach((_,id)=>{
+    if(!currentIds.has(id)){
+      LG.air.removeLayer(airMarkers.get(id));
+      airMarkers.delete(id);
+    }
+  });
+}
+
+async function fetchAir(){
+  if(airPollTimer) clearTimeout(airPollTimer);
+  try{
+    const r=await fetch('/api/aircraft',{signal:AbortSignal.timeout(22000)});
+    const rem=r.headers.get('X-Rate-Limit-Remaining');
+    if(rem) updateCreditMeter(rem);
+    if(r.status===429){
+      const wait=parseInt(r.headers.get('X-Rate-Limit-Retry-After')||'120');
+      setSrc('OS','fail',`OPENSKY — RATE LIMITED (${wait}s)`);
+      setTag('Air','fail','429');
+      tick(`OPENSKY rate limited — retry in ${wait}s`,'wn');
+      airPollTimer=setTimeout(fetchAir,wait*1000);
+      return;
+    }
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d=await r.json();
+    const states=(d.states||[]).filter(s=>s[5]&&s[6]&&!s[8]);
+
+    // Update state map — do NOT clear it, just update/add
+    const freshIds=new Set();
+    let n=0;
+    for(const s of states){
+      if(n>=1000) break;
+      const id=s[0],cs=(s[1]||'').trim()||id;
+      const lat=s[6],lon=s[5],alt=s[7]||0,vel=s[9]||0,hdg=s[10]||0;
+      const country=s[2]||'—',vertRate=s[11]||0,squawk=s[14]||'—';
+      const posSrc=['ADS-B','ASTERIX','MLAT','FLARM'][s[16]||0]||'—';
+      const info={cs,lat,lon,alt,vel,hdg,country,id,vertRate,squawk,posSrc,domain:'air'};
+      S.aircraft.set(id,info);
+      freshIds.add(id);
+      upsertAircraftMarker(id,info);
+      n++;
+    }
+
+    // Prune aircraft that dropped out of the feed
+    removeStaleAircraftMarkers(freshIds);
+    S.aircraft.forEach((_,id)=>{ if(!freshIds.has(id)) S.aircraft.delete(id); });
+
+    document.getElementById('cair').textContent=n.toLocaleString();
+    setSrc('OS','live',`OPENSKY — ${n} AIRCRAFT (${rem??'?'} credits)`);
+    setTag('Air','live','LIVE');
+    tick(`AIR: ${n} aircraft · OpenSky Network`,'ac');
+    refresh4d();
+    rebuildList();
+  }catch(e){
+    setSrc('OS','fail','OPENSKY — '+e.message.slice(0,36));
+    setTag('Air','fail','ERR');
+    tick(`OPENSKY: ${e.message}`,'wn');
+  }
+  airPollTimer=setTimeout(fetchAir,pollInterval);
+}
+
+// Dead-reckoning removed — OpenSky poll is source of truth
+
+// ══════════════════════════════════════════════════════════════
+//  SEA — AISSTREAM (real-time WebSocket via local /ws/vessels)
+// ══════════════════════════════════════════════════════════════
+let aisWs=null;
+
+// Persistent vessel markers — same pattern as airMarkers
+// The bug was: _marker stored on a NEW object each message, so it was always undefined
+const vesselMarkers=new Map(); // mmsi → L.marker
+
+function upsertVesselMarker(mmsi){
+  if(!S.layers.sea) return;
+  const v=S.vessels.get(mmsi);
+  if(!v||!v.lat||!v.lon) return;
+  if(vesselMarkers.has(mmsi)){
+    const m=vesselMarkers.get(mmsi);
+    const cur=m.getLatLng();
+    if(Math.abs(cur.lat-v.lat)<0.005&&Math.abs(cur.lng-v.lon)<0.005) return;
+    m.setLatLng([v.lat,v.lon]);
+  } else {
+    const m = L.circleMarker([v.lat,v.lon],{
+      radius:6, color:COL.sea, fillColor:COL.sea,
+      fillOpacity:0.85, weight:1, interactive:true,
+    }).on('click', () => selTrack(mmsi,'sea'));
+    LG.sea.addLayer(m);
+    vesselMarkers.set(mmsi,m);
+  }
+}
+
+// Highlight selected vessel marker
+function refreshVesselMarkerStyle(mmsi){
+  const m=vesselMarkers.get(mmsi);
+  if(!m) return;
+  const sel=S.selected===mmsi;
+  m.setStyle(sel
+    ? {radius:8, color:'#fff', fillColor:COL.sea, weight:2}
+    : {radius:6, color:COL.sea, fillColor:COL.sea, weight:1});
+}
+// 3D vessel refresh — runs on a timer, not on every AIS message
+setInterval(()=>{ refresh4d(); }, 5000);
+
+function connectAIS(){
+  const wsUrl=`ws://${location.host}/ws/vessels`;
+  tick(`AIS: connecting to ${wsUrl}…`);
+
+  aisWs=new WebSocket(wsUrl);
+
+  aisWs.onopen=()=>{
+    setSrc('AIS','live','AISSTREAM — CONNECTED (LIVE)');
+    tick('AIS: WebSocket connected · real-time vessel stream','ac');
+  };
+
+  aisWs.onmessage=ev=>{
+    try{
+      const msg=JSON.parse(ev.data);
+
+      if(msg.t==='pos'){
+        const {mmsi,name,lat,lon,hdg,sog,status}=msg;
+        if(!lat||!lon) return;
+
+        // Preserve existing enriched data (name/type/dest from static messages)
+        const existing=S.vessels.get(mmsi)||{};
+        S.vessels.set(mmsi,{
+          ...existing,
+          id:mmsi, mmsi,
+          name: name||(existing.name)||('VESSEL '+mmsi),
+          lat, lon,
+          hdg: hdg||0,
+          vel: sog||0,
+          type: existing.type||0,
+          dest: existing.dest||'—',
+          callsign: existing.callsign||'—',
+          status, domain:'sea', live:true,
+        });
+
+        upsertVesselMarker(mmsi);
+        if(S.selected===mmsi) selTrack(mmsi,'sea');
+
+      }else if(msg.t==='static'){
+        const existing=S.vessels.get(msg.mmsi)||{};
+        S.vessels.set(msg.mmsi,{
+          ...existing, ...msg,
+          id:msg.mmsi, domain:'sea', live:true,
+        });
+        // Refresh marker label if vessel already visible
+        if(vesselMarkers.has(msg.mmsi)) upsertVesselMarker(msg.mmsi);
+      }
+
+      // Debounced — AIS fires hundreds of msgs/sec, don't rebuild DOM every time
+      scheduleRebuild();
+    }catch(_){}
+  };
+
+  aisWs.onclose=()=>{
+    setSrc('AIS','fail','AISSTREAM — RECONNECTING');
+    tick('AIS WebSocket closed — reconnecting in 5s','wn');
+    setTimeout(connectAIS,5000);
+  };
+
+  aisWs.onerror=e=>{
+    tick('AIS WebSocket error','al');
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SATELLITES — CELESTRAK JSON OMM FORMAT
+//
+//  Backend fetches /api/satellites which returns CelesTrak OMM JSON.
+//  Each object has fields like OBJECT_NAME, TLE_LINE1, TLE_LINE2, _category.
+//  We propagate orbits using satellite.js exactly as before.
+//
+//  CelesTrak policy (strictly followed by backend):
+//  - JSON format, not TLE — no 5-digit catalog number limit
+//  - Only 3 groups fetched (active, stations, visual)
+//  - 2-hour cache minimum — backend handles this
+//  - Stop on 403/404 — backend handles this
+// ══════════════════════════════════════════════════════════════
+let satRecs = [];
+
+// Map from our _category label to display group
+const CAT_TO_GRP = {
+  ACTIVE:  'ACTIVE',
+  SPECIAL: 'SPECIAL',
+};
+
+async function fetchSats(){
+  try{
+    const r = await fetch('/api/satellites', {signal: AbortSignal.timeout(30000)});
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+
+    if(!Array.isArray(data) || data.length === 0){
+      throw new Error('empty satellite data');
+    }
+
+    // Convert OMM JSON objects to our internal satRec format
+    // OMM JSON has: OBJECT_NAME, TLE_LINE1, TLE_LINE2, EPOCH, MEAN_MOTION,
+    // ECCENTRICITY, INCLINATION, RA_OF_ASC_NODE, ARG_OF_PERICENTER,
+    // MEAN_ANOMALY, BSTAR, _category (added by our backend)
+    satRecs = [];
+    let skipped = 0;
+    for(const obj of data){
+      const name = obj.name || obj.OBJECT_NAME || 'UNKNOWN';
+      const grp  = obj.grp  || obj._category  || 'ACTIVE';
+      const l1   = obj.TLE_LINE1;
+      const l2   = obj.TLE_LINE2;
+
+      if(!l1 || !l2){
+        // OMM JSON may not include TLE lines for high-catalog-number objects
+        // In that case we skip — satellite.js needs TLE format
+        skipped++;
+        continue;
+      }
+      try{
+        const satrec = satellite.twoline2satrec(l1.trim(), l2.trim());
+        satRecs.push({name, satrec, grp});
+      }catch(_){ skipped++; }
+    }
+
+    const total = satRecs.length;
+    setSrc('TLE','live',`CELESTRAK — ${total} OBJECTS (JSON)`);
+    setTag('Sat','live','LIVE');
+    tick(`SATS: ${total} objects loaded (${skipped} skipped — no TLE lines)`, 'ac');
+    propagateSats();
+    setInterval(propagateSats, 30000);
+
+  }catch(e){
+    setSrc('TLE','fail','CELESTRAK — ' + e.message.slice(0,30));
+    setTag('Sat','fail','ERR');
+    tick(`CELESTRAK: ${e.message}`, 'wn');
+  }
+}
+
+// Persistent satellite circle markers
+const satMarkers = new Map(); // id → L.circleMarker
+
+function propagateSats(){
+  const now  = new Date();
+  const gmst = satellite.gstime(now);
+  const freshSatIds = new Set();
+  let n = 0;
+
+  satRecs.forEach(rec => {
+    try{
+      const pv = satellite.propagate(rec.satrec, now);
+      if(!pv.position || pv.position === false) return;
+
+      const geo = satellite.eciToGeodetic(pv.position, gmst);
+      const lat = satellite.degreesLat(geo.latitude);
+      const lon = satellite.degreesLong(geo.longitude);
+      const alt = geo.height;
+      if(isNaN(lat) || isNaN(lon) || isNaN(alt)) return;
+
+      const id = 'sat_' + rec.name;
+      S.satellites.set(id, {name:rec.name, lat, lon, alt, grp:rec.grp, satrec:rec.satrec, domain:'sat'});
+      freshSatIds.add(id);
+      n++;
+
+      if(!S.layers.sat || !S.satGroups[rec.grp]) return;
+
+      const col = SAT_COL[rec.grp] || COL.sat;
+
+      if(satMarkers.has(id)){
+        satMarkers.get(id).setLatLng([lat, lon]);
+      } else {
+        // divIcon with dot + permanent name label — always clickable, always visible
+        const m = L.marker([lat, lon], {
+          icon: L.divIcon({
+            html: `<div class="track-dot sat-dot" style="background:${col};box-shadow:0 0 5px ${col}66"></div><span class="sat-label" style="color:${col}">${rec.name.slice(0,14)}</span>`,
+            className: 'sat-marker',
+            iconAnchor: [5, 5],
+          }),
+          interactive: true,
+        }).on('click', () => selTrack(id, 'sat'));
+        LG.sat.addLayer(m);
+        satMarkers.set(id, m);
+      }
+    }catch(_){}
+  });
+
+  // Remove markers for sats that are gone
+  satMarkers.forEach((_,id) => {
+    if(!freshSatIds.has(id)){
+      LG.sat.removeLayer(satMarkers.get(id));
+      satMarkers.delete(id);
+    }
+  });
+
+  // Footprint only for selected satellite
+  LG.footprints.clearLayers();
+  if(S.selected && S.selected.startsWith('sat_')){
+    const info = S.satellites.get(S.selected);
+    if(info && info.alt < 1500){
+      const R=6371, a=Math.acos(Math.min(1,R/(R+info.alt))), fkm=R*a*1000;
+      const col = SAT_COL[info.grp] || COL.sat;
+      L.circle([info.lat, info.lon], {radius:fkm, color:col, fillColor:col,
+        fillOpacity:.04, weight:.8, opacity:.3, dashArray:'5 8'
+      }).addTo(LG.footprints);
+    }
+  }
+
+  document.getElementById('csat').textContent = n;
+  refresh4d();
+  rebuildList();
+}
+
+function redrawSats2D(){
+  satMarkers.forEach((m, id) => {
+    const info = S.satellites.get(id);
+    if(!info) return;
+    if(S.layers.sat && S.satGroups[info.grp]){
+      if(!LG.sat.hasLayer(m)) LG.sat.addLayer(m);
+    } else {
+      if(LG.sat.hasLayer(m)) LG.sat.removeLayer(m);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GPS JAMMING — via local proxy /api/gpsjam
+// ══════════════════════════════════════════════════════════════
+async function fetchJam(){
+  try{
+    const r=await fetch('/api/gpsjam',{signal:AbortSignal.timeout(30000)});
+    const dateUsed=r.headers.get('X-GPSJam-Date')||'unknown';
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    const lines=(await r.text()).split('\n').slice(1);
+    const pts=[];let n=0;
+    for(const l of lines){
+      const pp=l.split(',');
+      const lat=parseFloat(pp[0]),lon=parseFloat(pp[1]),lv=parseFloat(pp[2]);
+      if(isNaN(lat)||isNaN(lon)||isNaN(lv)||lv<.3)continue;
+      pts.push([lat,lon,lv]);n++;
+    }
+    S.jamPts=pts;drawJam(pts);
+    document.getElementById('cjam').textContent=n.toLocaleString();
+    setSrc('Jam','live',`GPSJAM.ORG — ${n} ZONES (${dateUsed})`);
+    setTag('Jam','live','LIVE');
+    tick(`JAM: ${n} interference zones · GPSJam.org ${dateUsed}`,'wn');
+    refresh4d();
+  }catch(e){
+    tick(`GPSJAM: ${e.message} → OSINT fallback`,'wn');
+    setSrc('Jam','demo','GPSJAM — OSINT KNOWN ZONES');
+    setTag('Jam','demo','OSINT');
+    knownJam();
+  }
+}
+
+function drawJam(pts){
+  if(jamHeat)map.removeLayer(jamHeat);
+  if(!S.layers.jam||!pts.length)return;
+  jamHeat=L.heatLayer(pts,{radius:28,blur:22,maxZoom:9,max:1,
+    gradient:{0:'rgba(255,112,64,0)',.35:'rgba(255,112,64,.45)',
+      .7:'rgba(255,64,64,.75)',1:'rgba(255,20,20,1)'}}).addTo(map);
+}
+
+function knownJam(){
+  const Z=[[31.7,35.2,.98],[32.1,34.9,.9],[30.5,34.5,.85],[33.5,36.3,.85],[35.0,38.5,.75],
+    [33.3,44.4,.65],[35.5,33.5,.8],[48.5,37.5,.95],[47.5,37.8,.9],[48.0,33.5,.88],
+    [47.0,38.2,.85],[46.5,32.0,.85],[47.8,35.2,.8],[50.0,36.2,.7],[49.5,34.5,.65],
+    [59.9,30.3,.6],[55.7,37.6,.5],[54.7,20.5,.75],[68.0,33.0,.55],[60.2,25.0,.5],
+    [56.9,24.1,.5],[26.0,55.0,.6],[25.0,56.0,.55],[24.5,54.5,.45],
+    [15.0,42.5,.75],[12.8,45.0,.65],[37.5,126.5,.55],[38.0,127.0,.5]];
+  S.jamPts=Z;drawJam(Z);
+  document.getElementById('cjam').textContent=Z.length+' OSINT';
+  const labs=[[31.7,35.2,'ISRAEL/GAZA'],[48.5,37.5,'DONBAS'],[46.5,32.0,'KHERSON'],
+    [54.7,20.5,'KALININGRAD'],[33.5,36.3,'SYRIA'],[26.0,55.0,'PERSIAN GULF'],
+    [15.0,42.5,'YEMEN'],[37.5,126.5,'KOREA STR']];
+  if(S.layers.jam)labs.forEach(([la,lo,lbl])=>{
+    L.marker([la,lo],{icon:L.divIcon({
+      html:`<div style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:500;color:#ff7040;background:rgba(0,0,0,.62);padding:2px 6px;border:1px solid #ff7040;white-space:nowrap">⚡ ${lbl}</div>`,
+      className:'',iconAnchor:[0,8]})}).addTo(LG.jam);
+  });
+  refresh4d();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  DETAIL PANEL
+// ══════════════════════════════════════════════════════════════
+function selTrack(id,domain){
+  S.selected=id;
+  let info;
+  if(domain==='air')info=S.aircraft.get(id);
+  else if(domain==='sea')info=S.vessels.get(id);
+  else if(domain==='sat')info=S.satellites.get(id);
+  if(!info)return;
+
+  const col=domain==='sat'?(SAT_COL[info.grp]||COL.sat):COL[domain];
+  let title='',rows='';
+
+  if(domain==='air'){
+    title=info.cs;
+    rows=`
+      <div class="dsec">IDENTIFICATION</div>
+      <div class="drow"><span class="dkey">ICAO24</span><span class="dval">${info.id}</span></div>
+      <div class="drow"><span class="dkey">CALLSIGN</span><span class="dval hi">${info.cs}</span></div>
+      <div class="drow"><span class="dkey">ORIGIN</span><span class="dval">${info.country}</span></div>
+      <div class="drow"><span class="dkey">SQUAWK</span><span class="dval">${info.squawk||'—'}</span></div>
+      <div class="dsec">TELEMETRY</div>
+      <div class="drow"><span class="dkey">ALT BARO</span><span class="dval">${Math.round(info.alt)}m / ${Math.round(info.alt*3.281)}ft</span></div>
+      <div class="drow"><span class="dkey">VELOCITY</span><span class="dval">${Math.round(info.vel*1.944)}kt</span></div>
+      <div class="drow"><span class="dkey">HEADING</span><span class="dval">${Math.round(info.hdg||0)}°</span></div>
+      <div class="drow"><span class="dkey">VERT RATE</span><span class="dval">${(info.vertRate||0)>=0?'↑':'↓'} ${Math.abs(info.vertRate||0).toFixed(1)} m/s</span></div>
+      <div class="drow"><span class="dkey">POS SOURCE</span><span class="dval">${info.posSrc||'—'}</span></div>
+      <div class="drow"><span class="dkey">LAT / LON</span><span class="dval">${info.lat.toFixed(4)}° / ${info.lon.toFixed(4)}°</span></div>
+      <div class="drow"><span class="dkey">SOURCE</span><span class="dval hi">OPENSKY LIVE</span></div>`;
+  }else if(domain==='sea'){
+    title=info.name;
+    rows=`
+      <div class="dsec">IDENTIFICATION</div>
+      <div class="drow"><span class="dkey">MMSI</span><span class="dval">${info.mmsi}</span></div>
+      <div class="drow"><span class="dkey">NAME</span><span class="dval hi">${info.name}</span></div>
+      <div class="drow"><span class="dkey">TYPE</span><span class="dval">${shipType(info.type)}</span></div>
+      <div class="drow"><span class="dkey">CALLSIGN</span><span class="dval">${info.callsign||'—'}</span></div>
+      <div class="drow"><span class="dkey">DEST</span><span class="dval">${info.dest||'—'}</span></div>
+      <div class="dsec">NAVIGATION</div>
+      <div class="drow"><span class="dkey">SPEED</span><span class="dval">${(info.vel||0).toFixed(1)} kn</span></div>
+      <div class="drow"><span class="dkey">HEADING</span><span class="dval">${Math.round(info.hdg||0)}°</span></div>
+      <div class="drow"><span class="dkey">LAT / LON</span><span class="dval">${info.lat.toFixed(4)}° / ${info.lon.toFixed(4)}°</span></div>
+      <div class="drow"><span class="dkey">SOURCE</span><span class="dval hi">AISSTREAM LIVE</span></div>`;
+  }else if(domain==='sat'){
+    title=info.name;
+    const R=6371,fa=Math.acos(Math.min(1,R/(R+info.alt))),fkm=Math.round(R*fa);
+    const period=info.satrec?(2*Math.PI/info.satrec.no).toFixed(1)+'min':'—';
+    const oType=info.alt<600?'LEO':info.alt<2000?'MEO':info.alt>35000?'GEO':'HEO';
+    rows=`
+      <div class="dsec">IDENTIFICATION</div>
+      <div class="drow"><span class="dkey">NAME</span><span class="dval" style="color:${col}">${info.name}</span></div>
+      <div class="drow"><span class="dkey">CATEGORY</span><span class="dval" style="color:${col}">${info.grp}</span></div>
+      <div class="dsec">ORBITAL PARAMETERS</div>
+      <div class="drow"><span class="dkey">ALTITUDE</span><span class="dval">${Math.round(info.alt)} km</span></div>
+      <div class="drow"><span class="dkey">ORBIT</span><span class="dval">${oType} · ${period}</span></div>
+      <div class="drow"><span class="dkey">FOOTPRINT</span><span class="dval">~${fkm} km radius</span></div>
+      <div class="drow"><span class="dkey">LAT / LON</span><span class="dval">${info.lat.toFixed(4)}° / ${info.lon.toFixed(4)}°</span></div>
+      <div class="drow"><span class="dkey">SOURCE</span><span class="dval hi">CELESTRAK LIVE TLE</span></div>
+      <div class="drow"><span class="dkey">3D ORBIT</span><span class="dval link" onclick="toggleView()">VIEW IN 3D ↗</span></div>`;
+  }
+
+  document.getElementById('din').innerHTML=`
+    <div class="dcall" style="color:${col};text-shadow:0 0 16px ${col}44">${title}</div>
+    <div class="dbadge" style="border-color:${col};color:${col}">${domain.toUpperCase()}</div>
+    ${rows}
+    <div class="drow" style="margin-top:6px;border:none">
+      <span class="dkey">UPDATED</span>
+      <span class="dval" style="color:var(--txt2)">${new Date().toISOString().substr(11,8)}Z</span>
+    </div>`;
+  document.getElementById('detail').classList.add('vis');
+
+  if(info.lat&&info.lon&&S.view==='2d')map.panTo([info.lat,info.lon],{animate:true,duration:.6});
+  if(domain==='sat'&&S.view==='2d'){
+    // Trigger propagateSats to redraw footprint for new selection
+    propagateSats();
+  }
+  if(domain==='sea') refreshVesselMarkerStyle(id);
+  if(S.view==='4d'&&globe){  // just refresh 4D data; globe auto-focuses
+    globe4dUpdate(); // refresh globe with selection highlighted
+  }
+  rebuildList();
+}
+function closeDetail(){S.selected=null;document.getElementById('detail').classList.remove('vis');rebuildList();}
+
+// ── TRACK LIST ────────────────────────────────────────────────
+function rebuildList(){
+  const q=document.getElementById('sb-search').value.toLowerCase();
+  const items=[];
+  if(S.layers.air)S.aircraft.forEach((a,id)=>items.push({id,domain:'air',label:a.cs,sub:`${a.country} · ${Math.round(a.alt)}m`,col:COL.air}));
+  if(S.layers.sea)S.vessels.forEach((v,id)=>items.push({id,domain:'sea',label:v.name,sub:`${shipType(v.type)} · ${(v.vel||0).toFixed(1)}kn`,col:COL.sea}));
+  if(S.layers.sat)S.satellites.forEach((s,id)=>{
+    if(!S.satGroups[s.grp])return;
+    items.push({id,domain:'sat',label:s.name,sub:`${s.grp} · ${Math.round(s.alt)}km`,col:SAT_COL[s.grp]||COL.sat});
+  });
+  const filt=q?items.filter(i=>i.label.toLowerCase().includes(q)||i.sub.toLowerCase().includes(q)):items;
+  const el=document.getElementById('sb-list');el.innerHTML='';
+  filt.slice(0,300).forEach(t=>{
+    const d=document.createElement('div');
+    d.className='tli'+(S.selected===t.id?' sel':'');
+    d.innerHTML=`<div class="tlidot" style="background:${t.col};box-shadow:0 0 4px ${t.col}44"></div><div style="min-width:0;flex:1"><div class="tliname">${t.label}</div><div class="tlisub">${t.sub}</div></div>`;
+    d.addEventListener('click',()=>selTrack(t.id,t.domain));
+    el.appendChild(d);
+  });
+  document.getElementById('sb-count').textContent=filt.length.toLocaleString();
+}
+document.getElementById('sb-search').addEventListener('input',rebuildList);
+
+// Debounced rebuild — prevents DOM thrash from high-frequency AIS messages
+let _rebuildTimer=null;
+function scheduleRebuild(){
+  if(_rebuildTimer) return;
+  _rebuildTimer=setTimeout(()=>{
+    _rebuildTimer=null;
+    document.getElementById('csea').textContent=S.vessels.size.toLocaleString();
+    rebuildList();
+  }, 1000);
+}
+
+// ── DOMAIN TOGGLES ────────────────────────────────────────────
+document.querySelectorAll('.dbtn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const d=btn.dataset.d;S.layers[d]=!S.layers[d];btn.classList.toggle('on',S.layers[d]);
+    if(d==='air'){S.layers.air?LG.air.addTo(map):map.removeLayer(LG.air);}
+    if(d==='sea'){S.layers.sea?LG.sea.addTo(map):map.removeLayer(LG.sea);}
+    if(d==='sat'){if(S.layers.sat){LG.sat.addTo(map);LG.footprints.addTo(map);}else{map.removeLayer(LG.sat);map.removeLayer(LG.footprints);}}
+    if(d==='jam'){if(S.layers.jam){LG.jam.addTo(map);if(jamHeat)jamHeat.addTo(map);}else{map.removeLayer(LG.jam);if(jamHeat)map.removeLayer(jamHeat);}}
+    rebuildList();tick(`${d.toUpperCase()} ${S.layers[d]?'ON':'OFF'}`);
+  });
+});
+
+// ── BOOT ──────────────────────────────────────────────────────
+const BS=[
+  [8,  'MAP ENGINE · LEAFLET READY'],
+  [20, 'OPENSKY PROXY · OAUTH2 TOKEN'],
+  [35, 'CELESTRAK · 6 TLE CATEGORIES'],
+  [52, 'GPSJAM · DAILY INTERFERENCE MAP'],
+  [68, 'AISSTREAM · WEBSOCKET HANDSHAKE'],
+  [82, 'ORBITAL MECHANICS · satellite.js'],
+  [94, 'TRAIL RENDERER · CALIBRATING'],
+  [100,'ALL SYSTEMS NOMINAL · GAS-1 ONLINE'],
+];
+let bi=0;
+function advBoot(){
+  if(bi>=BS.length)return;
+  const[pct,msg]=BS[bi++];
+  document.getElementById('bfill').style.width=pct+'%';
+  document.getElementById('blog').innerHTML=BS.slice(0,bi).map((s,i)=>
+    `<span style="color:${i===bi-1?'var(--accent)':'var(--txt2)'}">${s[1]}</span>`
+  ).join('<br>');
+  if(bi<BS.length)setTimeout(advBoot,380);
+}
+advBoot();
+
+async function boot(){
+  connectAIS();          // Start AIS WebSocket immediately
+  await fetchSats();     // CelesTrak TLE
+  await fetchJam();      // GPSJam
+  await fetchAir();      // OpenSky (starts polling cycle)
+  const b=document.getElementById('boot');
+  b.style.transition='opacity .85s ease';b.style.opacity='0';
+  setTimeout(()=>b.style.display='none',900);
+  tick('GAS-1 ONLINE · OPENSKY · AISSTREAM(LIVE) · CELESTRAK(6CAT) · GPSJAM','ac');
+  rebuildList();
+}
+checkConfig(); // show setup or boot directly if credentials saved
+</script>
+</body>
+</html>
